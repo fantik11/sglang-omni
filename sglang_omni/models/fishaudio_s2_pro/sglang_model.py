@@ -407,8 +407,35 @@ class S2ProSGLangTextModel(nn.Module):
             self._semantic_begin_id,
         )
 
-        self._output_codes[:bs] = output_codes
-        self._output_semantic_ids[:bs] = semantic_ids
+        # Constrained decode: mask non-semantic tokens, then sample
+        biased_logits = logits + self._semantic_bias
+        # Note (Xuesong): Following Non-CUDA Graph path with temperature=0.7 (fish-speech upstream default).
+        # reference: https://github.com/sgl-project/sglang-omni/pull/267
+        probs = torch.softmax(biased_logits / 0.7, dim=-1)
+        semantic_token = torch.multinomial(probs, num_samples=1).squeeze(-1)  # [bs]
+
+        # Batched codebook loop
+        self._audio_decoder.reset_caches()
+        fast_input = self._audio_decoder.project_in(hidden_states)
+        fast_input = fast_input.unsqueeze(1)  # [bs, 1, fast_dim]
+        self._audio_decoder.forward_kvcached(fast_input, codebook_idx=0)
+
+        sem_id = (semantic_token - self._semantic_begin_id).clamp(min=0)
+        cb_hidden = self._audio_decoder.embeddings(sem_id).unsqueeze(1)
+
+        self._output_codes[:bs, 0] = semantic_token
+        self._output_codes[:bs, 1] = sem_id
+
+        for cb_idx in range(1, self._num_codebooks):
+            cb_logits = self._audio_decoder.forward_kvcached(
+                cb_hidden, codebook_idx=cb_idx
+            )
+            cb_logits = cb_logits[:, 0, : self._codebook_size]
+            cb_token = torch.argmax(cb_logits, dim=-1)  # [bs]
+            cb_hidden = self._audio_decoder.embeddings(cb_token).unsqueeze(1)
+            self._output_codes[:bs, cb_idx + 1] = cb_token
+
+        self._output_semantic_ids[:bs] = semantic_token
 
     # ------------------------------------------------------------------
     # Helpers
