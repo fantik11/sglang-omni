@@ -281,6 +281,7 @@ def create_sglang_tts_engine_executor(
     stream_stride: int = 5,
     stream_followup_stride: int = 100,
     stream_vocoder_device: str | None = None,
+    compile_level: str = "none",
 ) -> EngineExecutor:
     """Factory for the S2-Pro TTS engine stage."""
     from sglang.srt.server_args import ServerArgs
@@ -334,6 +335,7 @@ def create_sglang_tts_engine_executor(
         codebook_size=codebook_size,
         max_new_tokens=max_new_tokens,
         top_k=top_k,
+        compile_level=compile_level,
     )
 
     # Note (Xuesong, Chenyang):
